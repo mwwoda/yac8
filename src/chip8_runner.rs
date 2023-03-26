@@ -1,14 +1,16 @@
 use std::{thread, time};
+
 use crate::chip8::Chip8;
-use crate::graphics::Display;
 use crate::input::Input;
+use crate::sdl_driver::SDLDriver;
 
 pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
     let clock_speed = 500;
     let refresh_rate = 60;
     let cycles_per_frame = clock_speed / refresh_rate;
-    let mut display = Display::new(scale).unwrap();
-    let mut input = Input::new(&display.sdl_context);
+    //TODO handle Result
+    let mut sdl_driver = SDLDriver::new(scale).unwrap();
+    let mut input = Input::new(&sdl_driver.sdl_context);
 
     let sleep_time = time::Duration::from_millis(((1.0 / refresh_rate as f64) * 1000.0) as u64);
 
@@ -30,7 +32,11 @@ pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
             }
 
             let instruction = chip8.fetch();
-            chip8.handle_op_code(instruction, &mut display, key);
+            chip8.handle_op_code(instruction, key);
+            if chip8.vram_changed {
+                sdl_driver.draw(&chip8);
+                chip8.vram_changed = false;
+            }
         }
     }
 }

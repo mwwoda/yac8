@@ -12,7 +12,7 @@ pub fn parse_file_path() -> String {
     args.remove(1)
 }
 
-fn load_rom_from_path(path: &str) -> Vec<u8> {
+pub fn load_rom_from_path(path: &str) -> Vec<u8> {
     match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) => panic!("Error encountered while loading file from path {} : {}", path, err),

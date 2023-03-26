@@ -3,12 +3,7 @@ use std::collections::VecDeque;
 use rand::Rng;
 
 use crate::bit_ops::{get_bit_at_u16, get_bit_at_u8, to_u16, to_u16_from_three, to_u8};
-use crate::graphics::Display;
 
-const PROGRAM_POINTER: u16 = 0x200;
-const FONT_POINTER: u16 = 0x000;
-const CH8_WIDTH: u8 = 64;
-const CH8_HEIGHT: u8 = 32;
 const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
     0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -26,17 +21,26 @@ const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
     0xF0, 0x80, 0xF0, 0x80, 0x80];  // F
 
+const FONT_POINTER: u16 = 0x000;
+const PROGRAM_POINTER: u16 = 0x200;
+
+pub const CH8_WIDTH: u8 = 64;
+pub const CH8_HEIGHT: u8 = 32;
+
+pub type Chip8Vram = [[bool; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
+
 pub struct Chip8 {
     registers: [u8; 16],
-    pub i: u16,
-    pub memory: [u8; 4096],
+    i: u16,
+    memory: [u8; 4096],
     stack: VecDeque<u16>,
     delay_timer: u8,
     sound_timer: u8,
-    pub pc: u16,
-    pixels: [[bool; CH8_WIDTH as usize]; CH8_HEIGHT as usize],
+    pc: u16,
+    pub vram: Chip8Vram,
+    pub vram_changed: bool,
     pub blocked: bool,
-    pub blocked_key_vx: u8,
+    blocked_key_vx: u8,
     config: Config,
 }
 
@@ -45,7 +49,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Self {
+    fn default() -> Self {
         Config {
             print_debug_messages: false
         }
@@ -53,25 +57,26 @@ impl Config {
 }
 
 impl Chip8 {
-    pub fn new(ch8_data: Vec<u8>) -> Self {
-        let mut memory = [0; 4096];
-
-        Chip8::load_to_memory(&mut memory, &FONT, FONT_POINTER);
-        Chip8::load_to_memory(&mut memory, ch8_data.as_slice(), PROGRAM_POINTER);
-
-        Chip8 {
+    pub fn new(rom: Vec<u8>) -> Self {
+        let mut chip8 = Chip8 {
             registers: [0; 16],
             i: 0,
-            memory,
+            memory: [0; 4096],
             stack: VecDeque::new(),
             delay_timer: 0,
             sound_timer: 0,
             pc: 0x200,
-            pixels: [[false; CH8_WIDTH as usize]; CH8_HEIGHT as usize],
+            vram: [[false; CH8_WIDTH as usize]; CH8_HEIGHT as usize],
+            vram_changed: false,
             blocked: false,
             blocked_key_vx: 0,
-            config: Config::new(),
-        }
+            config: Config::default(),
+        };
+
+        chip8.load_to_memory(&FONT, FONT_POINTER);
+        chip8.load_to_memory(rom.as_slice(), PROGRAM_POINTER);
+
+        chip8
     }
 
     pub fn fetch(&mut self) -> u16 {
@@ -81,27 +86,27 @@ impl Chip8 {
         instruction
     }
 
-    fn load_to_memory(memory: &mut [u8], data: &[u8], start_point: u16) {
+    pub fn load_to_memory(&mut self, data: &[u8], start_point: u16) {
         let mut curr_point = start_point;
         for byte in data {
-            memory[curr_point as usize] = *byte;
+            self.memory[curr_point as usize] = *byte;
             curr_point += 1
         }
     }
 
     pub fn set_pixel(&mut self, y: u8, x: u8, val: bool) {
-        self.pixels[y as usize][x as usize] = val;
+        self.vram[y as usize][x as usize] = val;
     }
 
     pub fn get_pixel(&self, y: u8, x: u8) -> bool {
-        self.pixels[y as usize][x as usize]
+        self.vram[y as usize][x as usize]
     }
 
     pub fn set_vf(&mut self, val: u8) {
         self.registers[0xf] = val
     }
 
-    pub fn handle_op_code(&mut self, hex: u16, display: &mut Display, key: Option<u8>) {
+    pub fn handle_op_code(&mut self, hex: u16, key: Option<u8>) {
         let nibbles = (
             ((hex & 0xF000) >> 12_u8) as u8,
             ((hex & 0x0F00) >> 8_u8) as u8,
@@ -109,7 +114,7 @@ impl Chip8 {
             (hex & 0x000F) as u8
         );
         match nibbles {
-            (0x0, 0x0, 0xe, 0x0) => self.clear_display(hex, display),
+            (0x0, 0x0, 0xe, 0x0) => self.clear_display(hex),
             (0x0, 0x0, 0xe, 0xe) => self.return_sub(hex),
             (0x0, _, _, _) => panic!("UNHANDLED COMMAND - MACHINED CODE ROUTINE"),
             (0x1, n1, n2, n3) => self.jump(hex, n1, n2, n3),
@@ -132,7 +137,7 @@ impl Chip8 {
             (0xa, n1, n2, n3) => self.set_i(hex, n1, n2, n3),
             (0xb, n1, n2, n3) => self.jump_plus_v0(hex, n1, n2, n3),
             (0xc, x, n1, n2) => self.set_vx_to_rand_and_nn(hex, x, n1, n2),
-            (0xd, x, y, n) => self.draw(hex, display, x, y, n),
+            (0xd, x, y, n) => self.draw(hex, x, y, n),
             (0xe, x, 0x9, 0xe) => self.skip_if_pressed(hex, x, key),
             (0xe, x, 0xa, 0x1) => self.skip_if_not_pressed(hex, x, key),
             (0xf, x, 0x0, 0x7) => self.set_vx_to_delay(hex, x),
@@ -152,18 +157,37 @@ impl Chip8 {
         self.pc += 2;
     }
 
-    fn clear_display(&mut self, hex: u16, display: &mut Display) {
+    fn clear_display(&mut self, hex: u16) {
         self.print_debug_message(hex, "Clear Display");
-        self.pixels = [[false; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
-        display.clear();
+        self.vram = [[false; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
+        self.vram_changed = true;
     }
 
-    fn draw(&mut self, hex: u16, display: &mut Display, x: u8, y: u8, n: u8) {
+    pub fn draw(&mut self, hex: u16, x: u8, y: u8, n: u8) {
         self.print_debug_message(hex, "Draw");
         let vx = self.registers[x as usize] & 63;
         let vy = self.registers[y as usize] & 31;
+        let mut flipped = false;
 
-        display.draw(vx, vy, n, self);
+        for row in 0..n {
+            for pix in 0..8 {
+                let i_val = self.memory[self.i as usize + row as usize];
+                let i_bit = get_bit_at_u8(i_val, 7 - pix);
+                let curr_x = vx + pix;
+                let curr_y = vy + row;
+
+                if i_bit && curr_x < CH8_WIDTH && curr_y < CH8_HEIGHT {
+                    let current_pixel = self.get_pixel(curr_y, curr_x);
+                    let screen_val = i_bit ^ current_pixel;
+                    if !screen_val && current_pixel { flipped = true };
+
+                    self.set_pixel(curr_y, curr_x, screen_val);
+                    self.vram_changed = true;
+                }
+            }
+        }
+
+        self.set_vf(flipped as u8);
     }
 
     fn set_i(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
