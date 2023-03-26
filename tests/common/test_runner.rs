@@ -10,7 +10,7 @@ pub fn dump_vram_after_blocked(data: &[u8], memory_start: u16) -> Chip8Vram {
 }
 
 fn load_test_suite() -> Chip8 {
-    let rom_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "roms", "chip8-test-suite.ch8"].iter().collect();
+    let rom_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "roms", "chip8-test-suite.ch8"].iter().collect();
     let rom = load_rom_from_path(rom_path.to_str().unwrap());
     Chip8::new(rom)
 }
