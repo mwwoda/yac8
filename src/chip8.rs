@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 use rand::Rng;
 
 use crate::bit_ops::{get_bit_at, to_u8};
+use crate::version::{Chip8Ver, ChipVersion};
+use crate::registers::Registers;
 use crate::to_u16;
 
 const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -31,8 +33,7 @@ pub const CH8_HEIGHT: u8 = 32;
 pub type Chip8Vram = [[bool; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
 
 pub struct Chip8 {
-    registers: [u8; 16],
-    i: u16,
+    registers: Registers,
     memory: [u8; 4096],
     stack: VecDeque<u16>,
     delay_timer: u8,
@@ -47,12 +48,14 @@ pub struct Chip8 {
 
 pub struct Config {
     print_debug_messages: bool,
+    version: Box<dyn ChipVersion>,
 }
 
 impl Config {
     fn default() -> Self {
         Config {
-            print_debug_messages: false
+            print_debug_messages: false,
+            version: Box::new(Chip8Ver {}),
         }
     }
 }
@@ -60,8 +63,7 @@ impl Config {
 impl Chip8 {
     pub fn new(rom: Vec<u8>) -> Self {
         let mut chip8 = Chip8 {
-            registers: [0; 16],
-            i: 0,
+            registers: Registers::default(),
             memory: [0; 4096],
             stack: VecDeque::new(),
             delay_timer: 0,
@@ -100,10 +102,6 @@ impl Chip8 {
 
     pub fn get_pixel(&self, y: u8, x: u8) -> bool {
         self.vram[y as usize][x as usize]
-    }
-
-    pub fn set_vf(&mut self, val: u8) {
-        self.registers[0xf] = val
     }
 
     pub fn handle_op_code(&mut self, hex: u16, key: Option<u8>) {
@@ -165,13 +163,13 @@ impl Chip8 {
 
     pub fn draw(&mut self, hex: u16, x: u8, y: u8, n: u8) {
         self.print_debug_message(hex, "Draw");
-        let vx = self.registers[x as usize] & 63;
-        let vy = self.registers[y as usize] & 31;
+        let vx = self.registers.get(x) & 63;
+        let vy = self.registers.get(y) & 31;
         let mut flipped = false;
 
         for row in 0..n {
             for pix in 0..8 {
-                let i_val = self.memory[self.i as usize + row as usize];
+                let i_val = self.memory[self.registers.i as usize + row as usize];
                 let i_bit = get_bit_at(i_val, 7 - pix);
                 let curr_x = vx + pix;
                 let curr_y = vy + row;
@@ -187,26 +185,26 @@ impl Chip8 {
             }
         }
 
-        self.set_vf(flipped as u8);
+        self.registers.set_vf(flipped as u8);
     }
 
     fn set_i(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Set I");
         let addr = to_u16!(n1, n2, n3);
-        self.i = addr;
+        self.registers.i = addr;
     }
 
     fn set_register_to(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {
         self.print_debug_message(hex, "Sets Vx = NN");
         let val = to_u8(n1, n2);
-        self.registers[x as usize] = val;
+        self.registers.set(x, val);
     }
 
     fn add_value_to_register(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {
         self.print_debug_message(hex, "Sets Vx += NN");
         let val = to_u8(n1, n2) as u16;
-        let res = self.registers[x as usize] as u16 + val;
-        self.registers[x as usize] = res as u8;
+        let res = self.registers.get(x) as u16 + val;
+        self.registers.set(x, res as u8);
     }
 
     fn jump(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
@@ -217,107 +215,111 @@ impl Chip8 {
 
     fn set_x_to_y(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx = Vy");
-        self.registers[x as usize] = self.registers[y as usize];
+        self.registers.set(x, self.registers.get(y));
     }
 
     fn set_x_to_y_or(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx |= Vy");
-        self.registers[x as usize] |= self.registers[y as usize];
+        self.registers.set(x, self.registers.get(x) | self.registers.get(y));
+        self.registers.or(x, y);
+        self.config.version.handle_vf(&mut self.registers);
     }
 
     fn set_x_to_y_and(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx &= Vy");
-        self.registers[x as usize] &= self.registers[y as usize];
+        self.registers.and(x, y);
+        self.config.version.handle_vf(&mut self.registers);
     }
 
     fn set_x_to_y_xor(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx ^= Vy");
-        self.registers[x as usize] ^= self.registers[y as usize];
+        self.registers.xor(x, y);
+        self.config.version.handle_vf(&mut self.registers);
     }
 
     fn add_y_to_x(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx += Vy");
-        let res = self.registers[x as usize] as u16 + self.registers[y as usize] as u16;
-        self.registers[x as usize] = res as u8;
-        self.set_vf(get_bit_at(res, 8) as u8);
+        let res = self.registers.get(x) as u16 + self.registers.get(y) as u16;
+        self.registers.set(x, res as u8);
+        self.registers.set_vf(get_bit_at(res, 8) as u8);
     }
 
     fn subtract_y_from_x(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx -= Vy");
-        let borrow = u8::from(self.registers[y as usize] < self.registers[x as usize]);
-        let res = self.registers[x as usize] as i16 - self.registers[y as usize] as i16;
-        self.registers[x as usize] = res as u8;
-        self.set_vf(borrow);
+        let borrow = u8::from(self.registers.get(y) < self.registers.get(x));
+        let res = self.registers.get(x) as i16 - self.registers.get(y) as i16;
+        self.registers.set(x, res as u8);
+        self.registers.set_vf(borrow);
     }
 
     fn shift_right(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets Vx >>= 1");
-        let lsb = get_bit_at(self.registers[x as usize], 0);
-        self.registers[x as usize] >>= 1;
-        self.set_vf(lsb as u8);
+        let lsb = get_bit_at(self.registers.get(x), 0);
+        self.registers.shift_right(x, 1);
+        self.registers.set_vf(lsb as u8);
     }
 
     fn subtract_x_from_y_and_assign_to_x(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx = Vy - Vx");
-        let borrow = u8::from(self.registers[x as usize] < self.registers[y as usize]);
-        let res = self.registers[y as usize] as i16 - self.registers[x as usize] as i16;
-        self.registers[x as usize] = res as u8;
-        self.set_vf(borrow);
+        let borrow = u8::from(self.registers.get(x) < self.registers.get(y));
+        let res = self.registers.get(y) as i16 - self.registers.get(x) as i16;
+        self.registers.set(x, res as u8);
+        self.registers.set_vf(borrow);
     }
 
     fn shift_left(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets Vx <<= 1");
-        self.registers[x as usize] <<= 1;
-        let msb = get_bit_at(self.registers[x as usize], 7);
-        self.set_vf(msb as u8);
+        self.registers.shift_left(x, 1);
+        let msb = get_bit_at(self.registers.get(x), 7);
+        self.registers.set_vf(msb as u8);
     }
 
     fn skip_if_equal(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {
         self.print_debug_message(hex, "Skip if Vx == NN");
         let val = to_u8(n1, n2);
-        if self.registers[x as usize] == val { self.skip() }
+        if self.registers.get(x) == val { self.skip() }
     }
 
     fn skip_if_not_equal(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {
         self.print_debug_message(hex, "Skip if Vx != NN");
         let val = to_u8(n1, n2);
-        if self.registers[x as usize] != val { self.skip() }
+        if self.registers.get(x) != val { self.skip() }
     }
 
     fn skip_if_registers_equal(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Skip if Vx == Vy");
-        if self.registers[x as usize] == self.registers[y as usize] { self.skip() }
+        if self.registers.get(x) == self.registers.get(y) { self.skip() }
     }
 
     fn skip_if_registers_not_equal(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Skip if Vx != Vy");
-        if self.registers[x as usize] != self.registers[y as usize] { self.skip() }
+        if self.registers.get(x) != self.registers.get(y) { self.skip() }
     }
 
     fn jump_plus_v0(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Jump to PC = V0 + NNN");
         let addr = to_u16!(n1, n2, n3);
-        self.pc = addr + self.registers[0] as u16;
+        self.pc = addr + self.registers.get(0) as u16;
     }
 
     fn set_vx_to_delay(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets Vx = delay");
-        self.registers[x as usize] = self.delay_timer;
+        self.registers.set(x, self.delay_timer);
     }
 
     fn set_delay_timer(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets delay = Vx");
-        self.delay_timer = self.registers[x as usize];
+        self.delay_timer = self.registers.get(x);
     }
 
     fn set_sound_timer(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets sound = Vx");
-        self.sound_timer = self.registers[x as usize];
+        self.sound_timer = self.registers.get(x);
     }
 
     fn add_vx_to_i(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets I += Vx");
-        self.i += self.registers[x as usize] as u16;
+        self.registers.i += self.registers.get(x) as u16;
     }
 
     fn call(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
@@ -336,7 +338,7 @@ impl Chip8 {
     fn skip_if_pressed(&mut self, hex: u16, x: u8, key: Option<u8>) {
         self.print_debug_message(hex, "Skip if key == Vx");
         if let Some(k) = key {
-            if k == self.registers[x as usize] {
+            if k == self.registers.get(x) {
                 self.skip();
             }
         }
@@ -345,7 +347,7 @@ impl Chip8 {
     fn skip_if_not_pressed(&mut self, hex: u16, x: u8, key: Option<u8>) {
         self.print_debug_message(hex, "Skip if key != Vx");
         if let Some(k) = key {
-            if k == self.registers[x as usize] {
+            if k == self.registers.get(x) {
                 return;
             }
         }
@@ -355,37 +357,39 @@ impl Chip8 {
     fn binary_coded_decimal(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Binary coded decimal");
 
-        let mut curr_val = self.registers[x as usize];
+        let mut curr_val = self.registers.get(x);
         let binary_hundred = curr_val / 100;
-        self.memory[self.i as usize] = binary_hundred;
+        self.memory[self.registers.i as usize] = binary_hundred;
         curr_val -= binary_hundred * 100;
 
         let binary_tens = curr_val / 10;
-        self.memory[(self.i + 1) as usize] = binary_tens;
+        self.memory[(self.registers.i + 1) as usize] = binary_tens;
         curr_val -= binary_tens * 10;
 
-        self.memory[(self.i + 2) as usize] = curr_val;
+        self.memory[(self.registers.i + 2) as usize] = curr_val;
     }
 
     fn reg_dump(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Reg dump");
         for n in 0..=x {
-            self.memory[(self.i + n as u16) as usize] = self.registers[n as usize];
+            self.memory[(self.registers.i + n as u16) as usize] = self.registers.get(n);
         }
+        self.config.version.handle_i(&mut self.registers, x as u16);
     }
 
     fn reg_load(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Reg load");
         for n in 0..=x {
-            self.registers[n as usize] = self.memory[(self.i + n as u16) as usize];
+            self.registers.set(n, self.memory[(self.registers.i + n as u16) as usize]);
         }
+        self.config.version.handle_i(&mut self.registers, x as u16);
     }
 
     fn set_vx_to_rand_and_nn(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {
         self.print_debug_message(hex, "Set VX to rand() & NN");
         let val = to_u8(n1, n2) as u16;
         let mut rng = rand::thread_rng();
-        self.registers[x as usize] = (rng.gen_range(0..256) & val) as u8;
+        self.registers.set(x, (rng.gen_range(0..256) & val) as u8);
     }
 
     fn get_key(&mut self, hex: u16, x: u8) {
@@ -396,12 +400,12 @@ impl Chip8 {
 
     fn set_i_to_sprite(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Set I to value of sprite at Vx");
-        let character = self.registers[x as usize];
-        self.i = FONT_POINTER + (character * 5) as u16;
+        let character = self.registers.get(x);
+        self.registers.i = FONT_POINTER + (character * 5) as u16;
     }
 
     pub fn set_key(&mut self, key: u8) {
-        self.registers[self.blocked_key_vx as usize] = key;
+        self.registers.set(self.blocked_key_vx, key);
         self.blocked = false;
     }
 
