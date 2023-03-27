@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use rand::Rng;
 
 use crate::bit_ops::{get_bit_at, to_u8};
-use crate::version::{Chip8Ver, ChipVersion};
 use crate::registers::Registers;
 use crate::to_u16;
+use crate::version::{Chip8Ver, ChipVersion};
 
 const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -220,7 +220,6 @@ impl Chip8 {
 
     fn set_x_to_y_or(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx |= Vy");
-        self.registers.set(x, self.registers.get(x) | self.registers.get(y));
         self.registers.or(x, y);
         self.config.version.handle_vf(&mut self.registers);
     }
