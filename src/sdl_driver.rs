@@ -47,7 +47,6 @@ impl SDLDriver {
                 if *x { self.canvas.set_draw_color(WHITE) } else { self.canvas.set_draw_color(BLACK); }
                 let rect = Rect::new((ix as u32 * self.scale) as i32, (iy as u32 * self.scale) as i32, self.scale, self.scale);
                 //TODO if it's the same we don't need to redraw
-                //TODO handle Result
                 self.canvas.fill_rect(rect).unwrap();
             }
         }

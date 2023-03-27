@@ -7,7 +7,6 @@ pub struct Input {
 
 impl Input {
     pub fn new(sdl_context: &sdl2::Sdl) -> Self {
-        //TODO handle Result
         Input { event_pump: sdl_context.event_pump().unwrap() }
     }
 
@@ -20,10 +19,7 @@ impl Input {
 
         for (scancode, res) in self.event_pump.keyboard_state().scancodes() {
             //TODO handle multiple key presses at once
-            match self.to_chip8_key(scancode) {
-                Some(key) if res => return Some(key),
-                _ => {}
-            }
+            if let (Some(key), true) = (self.to_chip8_key(scancode), res) { return Some(key); };
         }
 
         None

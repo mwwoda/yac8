@@ -8,7 +8,6 @@ pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
     let clock_speed = 500;
     let refresh_rate = 60;
     let cycles_per_frame = clock_speed / refresh_rate;
-    //TODO handle Result
     let mut sdl_driver = SDLDriver::new(scale).unwrap();
     let mut input = Input::new(&sdl_driver.sdl_context);
 
@@ -21,9 +20,8 @@ pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
         // }
         thread::sleep(sleep_time);
         //TODO fix timers
-        chip8.decrement_delay_timer();
         //TODO sound support
-        chip8.decrement_sound_timer();
+        chip8.decrement_timers();
         for _ in 0..cycles_per_frame {
             let key = input.poll_keys();
             if chip8.blocked {

@@ -17,8 +17,7 @@ fn load_test_suite() -> Chip8 {
 
 fn run_stop_on_blocked(mut chip8: Chip8) -> Chip8Vram {
     loop {
-        chip8.decrement_delay_timer();
-        chip8.decrement_sound_timer();
+        chip8.decrement_timers();
         if chip8.blocked {
             return chip8.vram;
         }

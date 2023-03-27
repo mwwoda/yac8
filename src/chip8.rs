@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 
 use rand::Rng;
 
-use crate::bit_ops::{get_bit_at_u16, get_bit_at_u8, to_u16, to_u16_from_three, to_u8};
+use crate::bit_ops::{get_bit_at, to_u8};
+use crate::to_u16;
 
 const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -80,8 +81,7 @@ impl Chip8 {
     }
 
     pub fn fetch(&mut self) -> u16 {
-        //TODO bound check
-        let instruction = to_u16(self.memory[(self.pc) as usize], self.memory[(self.pc + 1) as usize]);
+        let instruction = to_u16!(self.memory[(self.pc) as usize], self.memory[(self.pc + 1) as usize]);
         self.pc += 2;
         instruction
     }
@@ -172,7 +172,7 @@ impl Chip8 {
         for row in 0..n {
             for pix in 0..8 {
                 let i_val = self.memory[self.i as usize + row as usize];
-                let i_bit = get_bit_at_u8(i_val, 7 - pix);
+                let i_bit = get_bit_at(i_val, 7 - pix);
                 let curr_x = vx + pix;
                 let curr_y = vy + row;
 
@@ -192,7 +192,7 @@ impl Chip8 {
 
     fn set_i(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Set I");
-        let addr = to_u16_from_three(n1, n2, n3);
+        let addr = to_u16!(n1, n2, n3);
         self.i = addr;
     }
 
@@ -211,7 +211,7 @@ impl Chip8 {
 
     fn jump(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Jump to NNN");
-        let addr = to_u16_from_three(n1, n2, n3);
+        let addr = to_u16!(n1, n2, n3);
         self.pc = addr;
     }
 
@@ -239,7 +239,7 @@ impl Chip8 {
         self.print_debug_message(hex, "Sets Vx += Vy");
         let res = self.registers[x as usize] as u16 + self.registers[y as usize] as u16;
         self.registers[x as usize] = res as u8;
-        self.set_vf(get_bit_at_u16(res, 8) as u8);
+        self.set_vf(get_bit_at(res, 8) as u8);
     }
 
     fn subtract_y_from_x(&mut self, hex: u16, x: u8, y: u8) {
@@ -252,7 +252,7 @@ impl Chip8 {
 
     fn shift_right(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets Vx >>= 1");
-        let lsb = get_bit_at_u8(self.registers[x as usize], 0);
+        let lsb = get_bit_at(self.registers[x as usize], 0);
         self.registers[x as usize] >>= 1;
         self.set_vf(lsb as u8);
     }
@@ -268,7 +268,7 @@ impl Chip8 {
     fn shift_left(&mut self, hex: u16, x: u8) {
         self.print_debug_message(hex, "Sets Vx <<= 1");
         self.registers[x as usize] <<= 1;
-        let msb = get_bit_at_u8(self.registers[x as usize], 7);
+        let msb = get_bit_at(self.registers[x as usize], 7);
         self.set_vf(msb as u8);
     }
 
@@ -296,7 +296,7 @@ impl Chip8 {
 
     fn jump_plus_v0(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Jump to PC = V0 + NNN");
-        let addr = to_u16_from_three(n1, n2, n3);
+        let addr = to_u16!(n1, n2, n3);
         self.pc = addr + self.registers[0] as u16;
     }
 
@@ -322,7 +322,7 @@ impl Chip8 {
 
     fn call(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Sets sub");
-        let addr = to_u16_from_three(n1, n2, n3);
+        let addr = to_u16!(n1, n2, n3);
         self.stack.push_front(self.pc);
         self.pc = addr;
     }
@@ -405,12 +405,17 @@ impl Chip8 {
         self.blocked = false;
     }
 
-    pub fn decrement_delay_timer(&mut self) {
+    fn decrement_delay_timer(&mut self) {
         self.delay_timer = self.delay_timer.saturating_sub(1)
     }
 
-    pub fn decrement_sound_timer(&mut self) {
+    fn decrement_sound_timer(&mut self) {
         self.sound_timer = self.sound_timer.saturating_sub(1)
+    }
+
+    pub fn decrement_timers(&mut self) {
+        self.decrement_delay_timer();
+        self.decrement_sound_timer();
     }
 
     fn print_debug_message(&self, hex: u16, name: &str) {
