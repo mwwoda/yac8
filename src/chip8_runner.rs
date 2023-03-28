@@ -1,6 +1,7 @@
 use std::{thread, time};
+use std::time::Duration;
 
-use crate::chip8::{Chip8, Chip8Vram, VBLank};
+use crate::chip8::Chip8;
 use crate::input::Input;
 use crate::sdl_driver::SDLDriver;
 
@@ -8,7 +9,7 @@ const CLOCK_SPEED: u32 = 500;
 const REFRESH_RATE: u32 = 60;
 const CYCLES_PER_FRAME: u32 = CLOCK_SPEED / REFRESH_RATE;
 
-pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
+pub fn run_with_sdl(chip8: &mut Chip8, scale: u32) {
     let mut sdl_driver = SDLDriver::new(scale).unwrap();
     let mut input = Input::new(&sdl_driver.sdl_context);
 
@@ -22,15 +23,14 @@ pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
                 continue;
             }
 
-            let instruction = chip8.fetch();
-            chip8.handle_op_code(instruction, key);
+            chip8.execute_next_opcode(key);
         }
 
 
-        if let VBLank::WaitForInterrupt = chip8.vblank { chip8.vblank = VBLank::Free }
+        chip8.handle_vblank();
 
         if chip8.vram_changed {
-            sdl_driver.draw(&chip8);
+            sdl_driver.draw(chip8);
             chip8.vram_changed = false;
         }
 
@@ -46,18 +46,34 @@ pub fn run_with_sdl(mut chip8: Chip8, scale: u32) {
     }
 }
 
-pub fn run_stop_on_blocked(mut chip8: Chip8) -> Chip8Vram {
+pub fn run_stop_on_blocked(chip8: &mut Chip8) {
     loop {
         for _ in 0..CYCLES_PER_FRAME {
+            chip8.execute_next_opcode(None);
+
             if chip8.blocked {
-                return chip8.vram;
+                return;
             }
-            let instruction = chip8.fetch();
-            chip8.handle_op_code(instruction, None);
         }
 
-        if let VBLank::WaitForInterrupt = chip8.vblank { chip8.vblank = VBLank::Free }
+        chip8.handle_vblank();
+        chip8.decrement_timers();
+    }
+}
 
+pub fn run_for_cycles(chip8: &mut Chip8, cycles: u16) {
+    let mut elapsed_cycles = 0;
+    loop {
+        for _ in 0..CYCLES_PER_FRAME {
+            chip8.execute_next_opcode(None);
+
+            elapsed_cycles += 1;
+            if elapsed_cycles == cycles {
+                return;
+            }
+        }
+
+        chip8.handle_vblank();
         chip8.decrement_timers();
     }
 }

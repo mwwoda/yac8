@@ -6,8 +6,8 @@ use yac8::cli::load_from_cli;
 
 pub fn main() -> Result<(), String> {
     let rom = load_from_cli();
-    let chip8 = Chip8::new(rom);
-    run_with_sdl(chip8, 20);
+    let mut chip8 = Chip8::default(rom);
+    run_with_sdl(&mut chip8, 20);
 
     Ok(())
 }

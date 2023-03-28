@@ -33,7 +33,7 @@ pub const CH8_HEIGHT: u8 = 32;
 pub type Chip8Vram = [[bool; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
 
 pub struct Chip8 {
-    pub registers: Registers,
+    registers: Registers,
     memory: [u8; 4096],
     stack: VecDeque<u16>,
     delay_timer: u8,
@@ -45,7 +45,6 @@ pub struct Chip8 {
     blocked_key_vx: u8,
     config: Config,
     pub vblank: VBLank,
-    //pub v_blank: VBLank,
 }
 
 pub enum VBLank {
@@ -60,16 +59,20 @@ pub struct Config {
 }
 
 impl Config {
-    fn default() -> Self {
+    pub fn new(print_debug_messages: bool, quirks: Quirks) -> Self {
         Config {
-            print_debug_messages: false,
-            quirks: CH8_QUIRKS,
+            print_debug_messages,
+            quirks,
         }
+    }
+
+    pub fn ch8() -> Self {
+        Config::new(false, CH8_QUIRKS)
     }
 }
 
 impl Chip8 {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, config: Config) -> Self {
         let mut chip8 = Chip8 {
             registers: Registers::default(),
             memory: [0; 4096],
@@ -81,7 +84,7 @@ impl Chip8 {
             vram_changed: false,
             blocked: false,
             blocked_key_vx: 0,
-            config: Config::default(),
+            config,
             vblank: VBLank::Free,
         };
 
@@ -91,7 +94,11 @@ impl Chip8 {
         chip8
     }
 
-    pub fn fetch(&mut self) -> u16 {
+    pub fn default(rom: Vec<u8>) -> Self {
+        Chip8::new(rom, Config::ch8())
+    }
+
+    fn fetch(&mut self) -> u16 {
         let instruction = to_u16!(self.memory[(self.pc) as usize], self.memory[(self.pc + 1) as usize]);
         self.pc += 2;
         instruction
@@ -113,7 +120,9 @@ impl Chip8 {
         self.vram[y as usize][x as usize]
     }
 
-    pub fn handle_op_code(&mut self, hex: u16, key: Option<u8>) {
+    pub fn execute_next_opcode(&mut self, key: Option<u8>) {
+        let hex = self.fetch();
+
         let nibbles = (
             ((hex & 0xF000) >> 12_u8) as u8,
             ((hex & 0x0F00) >> 8_u8) as u8,
@@ -185,8 +194,7 @@ impl Chip8 {
             for pix in 0..8 {
                 let i_val = self.memory[self.registers.i as usize + row as usize];
                 let i_bit = get_bit_at(i_val, 7 - pix);
-                let curr_x = vx + pix;
-                let curr_y = vy + row;
+                let (curr_x, curr_y) = self.config.quirks.clipping(vx, pix, vy, row);
 
                 if i_bit && curr_x < CH8_WIDTH && curr_y < CH8_HEIGHT {
                     let current_pixel = self.get_pixel(curr_y, curr_x);
@@ -435,6 +443,10 @@ impl Chip8 {
     pub fn decrement_timers(&mut self) {
         self.decrement_delay_timer();
         self.decrement_sound_timer();
+    }
+
+    pub fn handle_vblank(&mut self) {
+        if let VBLank::WaitForInterrupt = self.vblank { self.vblank = VBLank::Free }
     }
 
     fn print_debug_message(&self, hex: u16, name: &str) {
