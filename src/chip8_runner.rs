@@ -1,5 +1,4 @@
 use std::{thread, time};
-use std::time::Duration;
 
 use crate::chip8::Chip8;
 use crate::input::Input;
