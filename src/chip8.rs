@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use rand::Rng;
 
 use crate::bit_ops::{get_bit_at, to_u8};
+use crate::quirks::{CH8_QUIRKS, Quirks};
 use crate::registers::Registers;
 use crate::to_u16;
-use crate::version::{Chip8Ver, ChipVersion};
 
 const FONT: [u8; 80] = [0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -33,7 +33,7 @@ pub const CH8_HEIGHT: u8 = 32;
 pub type Chip8Vram = [[bool; CH8_WIDTH as usize]; CH8_HEIGHT as usize];
 
 pub struct Chip8 {
-    registers: Registers,
+    pub registers: Registers,
     memory: [u8; 4096],
     stack: VecDeque<u16>,
     delay_timer: u8,
@@ -44,18 +44,26 @@ pub struct Chip8 {
     pub blocked: bool,
     blocked_key_vx: u8,
     config: Config,
+    pub vblank: VBLank,
+    //pub v_blank: VBLank,
+}
+
+pub enum VBLank {
+    WaitForDraw,
+    WaitForInterrupt,
+    Free,
 }
 
 pub struct Config {
     print_debug_messages: bool,
-    version: Box<dyn ChipVersion>,
+    quirks: Quirks,
 }
 
 impl Config {
     fn default() -> Self {
         Config {
             print_debug_messages: false,
-            version: Box::new(Chip8Ver {}),
+            quirks: CH8_QUIRKS,
         }
     }
 }
@@ -74,6 +82,7 @@ impl Chip8 {
             blocked: false,
             blocked_key_vx: 0,
             config: Config::default(),
+            vblank: VBLank::Free,
         };
 
         chip8.load_to_memory(&FONT, FONT_POINTER);
@@ -128,9 +137,9 @@ impl Chip8 {
             (0x8, x, y, 0x3) => self.set_x_to_y_xor(hex, x, y),
             (0x8, x, y, 0x4) => self.add_y_to_x(hex, x, y),
             (0x8, x, y, 0x5) => self.subtract_y_from_x(hex, x, y),
-            (0x8, x, _, 0x6) => self.shift_right(hex, x),
+            (0x8, x, y, 0x6) => self.shift_right(hex, x, y),
             (0x8, x, y, 0x7) => self.subtract_x_from_y_and_assign_to_x(hex, x, y),
-            (0x8, x, _, 0xe) => self.shift_left(hex, x),
+            (0x8, x, y, 0xe) => self.shift_left(hex, x, y),
             (0x9, x, y, 0x0) => self.skip_if_registers_not_equal(hex, x, y),
             (0xa, n1, n2, n3) => self.set_i(hex, n1, n2, n3),
             (0xb, n1, n2, n3) => self.jump_plus_v0(hex, n1, n2, n3),
@@ -162,6 +171,11 @@ impl Chip8 {
     }
 
     pub fn draw(&mut self, hex: u16, x: u8, y: u8, n: u8) {
+        if self.config.quirks.display_wait(&mut self.vblank) {
+            self.pc -= 2;
+            return;
+        }
+
         self.print_debug_message(hex, "Draw");
         let vx = self.registers.get(x) & 63;
         let vy = self.registers.get(y) & 31;
@@ -221,19 +235,19 @@ impl Chip8 {
     fn set_x_to_y_or(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx |= Vy");
         self.registers.or(x, y);
-        self.config.version.handle_vf(&mut self.registers);
+        self.config.quirks.vf_reset(&mut self.registers);
     }
 
     fn set_x_to_y_and(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx &= Vy");
         self.registers.and(x, y);
-        self.config.version.handle_vf(&mut self.registers);
+        self.config.quirks.vf_reset(&mut self.registers);
     }
 
     fn set_x_to_y_xor(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx ^= Vy");
         self.registers.xor(x, y);
-        self.config.version.handle_vf(&mut self.registers);
+        self.config.quirks.vf_reset(&mut self.registers);
     }
 
     fn add_y_to_x(&mut self, hex: u16, x: u8, y: u8) {
@@ -251,8 +265,9 @@ impl Chip8 {
         self.registers.set_vf(borrow);
     }
 
-    fn shift_right(&mut self, hex: u16, x: u8) {
+    fn shift_right(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx >>= 1");
+        self.config.quirks.shifting(&mut self.registers, x, y);
         let lsb = get_bit_at(self.registers.get(x), 0);
         self.registers.shift_right(x, 1);
         self.registers.set_vf(lsb as u8);
@@ -266,8 +281,9 @@ impl Chip8 {
         self.registers.set_vf(borrow);
     }
 
-    fn shift_left(&mut self, hex: u16, x: u8) {
+    fn shift_left(&mut self, hex: u16, x: u8, y: u8) {
         self.print_debug_message(hex, "Sets Vx <<= 1");
+        self.config.quirks.shifting(&mut self.registers, x, y);
         self.registers.shift_left(x, 1);
         let msb = get_bit_at(self.registers.get(x), 7);
         self.registers.set_vf(msb as u8);
@@ -298,7 +314,7 @@ impl Chip8 {
     fn jump_plus_v0(&mut self, hex: u16, n1: u8, n2: u8, n3: u8) {
         self.print_debug_message(hex, "Jump to PC = V0 + NNN");
         let addr = to_u16!(n1, n2, n3);
-        self.pc = addr + self.registers.get(0) as u16;
+        self.pc = addr + self.config.quirks.jumping(&mut self.registers, n1) as u16;
     }
 
     fn set_vx_to_delay(&mut self, hex: u16, x: u8) {
@@ -373,7 +389,7 @@ impl Chip8 {
         for n in 0..=x {
             self.memory[(self.registers.i + n as u16) as usize] = self.registers.get(n);
         }
-        self.config.version.handle_i(&mut self.registers, x as u16);
+        self.config.quirks.memory(&mut self.registers, x as u16);
     }
 
     fn reg_load(&mut self, hex: u16, x: u8) {
@@ -381,7 +397,7 @@ impl Chip8 {
         for n in 0..=x {
             self.registers.set(n, self.memory[(self.registers.i + n as u16) as usize]);
         }
-        self.config.version.handle_i(&mut self.registers, x as u16);
+        self.config.quirks.memory(&mut self.registers, x as u16);
     }
 
     fn set_vx_to_rand_and_nn(&mut self, hex: u16, x: u8, n1: u8, n2: u8) {

@@ -2,15 +2,16 @@
 
 ![Screenshot](/cover.png)
 
-yac8 is Yet Another Chip8 interpreter (or emulator if you prefer) written in Rust. The goal of this project is to make
-as accurate interpreter as possible. It is also my first attempt
-of writing a slightly more complex project in Rust, and also my first attempt at writing an emulator so I treat is as a
-learning experience.
+yac8 is Yet Another [CHIP-8](https://en.wikipedia.org/wiki/CHIP-8) interpreter (or emulator if you prefer) written in
+Rust. I started this project to learn
+more about emulator development in general. It's also my first attempt of writing a slightly more complex project in
+Rust.
 
 ## Usage
 
-[SDL2](https://github.com/Rust-SDL2/rust-sdl2) is required to run the desktop version\
-You also need to obtain a game rom to play
+[SDL2](https://www.libsdl.org) is required to run the desktop version. On Windows you need to put SDL2.dll in the root
+directory.\
+You also need to obtain a game rom to play.
 
 Clone this repo and run the following command in the CLI
 
@@ -27,12 +28,12 @@ cargo run /path/to/rom
     - [x] IBM Logo
     - [x] Corax89's opcode test
     - [x] Flags test
-    - [ ] Quirks test
+    - [x] Quirks test
     - [x] Keypad test
 - [ ] Sound support
 - [ ] Configuration (clock speed, timers, keyboard layout etc.)
 - [ ] Load rom from URL
-- [ ] GUI
 - [ ] WASM version
+- [ ] GUI
 - [ ] Debugger
 - [ ] Disassembler
